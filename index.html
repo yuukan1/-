@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>タンクラン：5レーン爆走</title>
+<style>
+:root{--bg:#eef2f5;--fg:#1d2a33;--btn:#3b6e4f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14191d;--fg:#e6edf1}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+.wrap{max-width:480px;margin:0 auto;padding:8px}
+canvas{width:100%;display:block;border-radius:10px;touch-action:none}
+.ctl{display:flex;gap:10px;margin-top:8px}
+button{flex:1;padding:20px 0;font-size:26px;font-weight:700;border:0;border-radius:12px;color:#fff;background:var(--btn);user-select:none;-webkit-user-select:none;touch-action:none}
+button:active{filter:brightness(1.25)}
+p{font-size:13px;opacity:.75;margin:8px 2px}
+</style></head><body><div class="wrap">
+<canvas id="c" width="480" height="640"></canvas>
+<div class="ctl"><button id="lb">◀ 左</button><button id="rb">右 ▶</button></div>
+<p>← → キー / A D / 画面の左右タップでレーン移動。燃料缶を拾って、燃料切れ前に1500mのゴールか最長記録を目指そう。岩にぶつかると減速します。</p>
+</div>
+<script>
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const W=480,H=640,GOAL=1500,HOR=130,YB=520,D=70,LW=78,CX=W/2,ROW=8;
+let best=0;try{best=+localStorage.getItem('tankBest2')||0}catch(e){}
+let s,seed=1;
+function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
+function reset(){
+ seed=Date.now()%2147483646+1;
+ const n=Math.floor((GOAL-60)/ROW),rows=[];
+ for(let k=0;k<n;k++)rows.push({z:60+k*ROW,cans:[],rock:-1});
+ let i=0,lane=2;
+ while(i<n){
+  const t=(-20+Math.sqrt(400+rows[i].z))/0.5,v=20+t*0.5;
+  const e=Math.min(n,i+Math.max(3,Math.round((2+rnd()*8)*v/ROW))),p=rnd();
+  let last=i;
+  if(p<.35){ // 1レーン直線
+   let nl;do{nl=(rnd()*5)|0}while(nl===lane&&i>0);lane=nl;
+   for(let j=i;j<e;j++){rows[j].cans.push(lane);last=j}}
+  else if(p<.6){ // 真ん中レーン等間隔
+   lane=2;for(let j=i;j<e;j+=2){rows[j].cans.push(2);last=j}}
+  else{ // 斜め(p>.82はジグザグ)
+   const step=3+((rnd()*3)|0),zig=p>.82;
+   let dir=lane<2?1:lane>2?-1:(rnd()<.5?1:-1),l=lane;
+   for(let j=i;j<e;j++){
+    if(j>i){l+=dir/step;if(l<0||l>4){if(!zig)break;dir=-dir;l=Math.max(0,Math.min(4,l))}}
+    rows[j].cans.push(l);last=j}
+   lane=Math.round(l)}
+  i=last+1}
+ for(let j=0;j<n;j++){const r=rows[j];
+  if(r.z>150&&rnd()<.14){const l=(rnd()*5)|0;let ok=true;
+   for(let q=Math.max(0,j-1);q<=Math.min(n-1,j+1);q++)for(const c of rows[q].cans)if(Math.abs(c-l)<1.1)ok=false;
+   if(ok)r.rock=l}}
+ s={z:0,v:20,fuel:100,lane:2,pos:2,rows,t:0,over:false,win:false,flash:0,got:0}}
+reset();
+function go(d){if(s.over||s.win)return;s.lane=Math.max(0,Math.min(4,s.lane+d))}
+addEventListener('keydown',e=>{const k=e.key;
+ if(k==='ArrowLeft'||k==='a'||k==='A'){go(-1);e.preventDefault()}
+ if(k==='ArrowRight'||k==='d'||k==='D'){go(1);e.preventDefault()}
+ if(k==='r'||k==='R')reset()});
+function btn(id,d){document.getElementById(id).addEventListener('pointerdown',e=>{e.preventDefault();if(s.over||s.win)reset();else go(d)})}
+btn('lb',-1);btn('rb',1);
+cv.addEventListener('pointerdown',e=>{
+ if(s.over||s.win){reset();return}
+ const r=cv.getBoundingClientRect();go(e.clientX-r.left<r.width/2?-1:1)});
+function step(dt){
+ if(s.over||s.win)return;
+ s.t+=dt;
+ s.v=Math.min(48,20+s.t*0.5);
+ s.z+=s.v*dt;
+ s.fuel=Math.max(0,s.fuel-(6+s.t*0.08)*dt);
+ s.pos+=(s.lane-s.pos)*Math.min(1,dt*14);
+ s.flash=Math.max(0,s.flash-dt);
+ for(const r of s.rows){
+  if(r.done)continue;
+  if(r.z<s.z-1){r.done=true;continue}
+  if(r.z<s.z+2){
+   r.cans=r.cans.filter(l=>{if(Math.abs(l-s.pos)<.6){s.fuel=Math.min(100,s.fuel+6);s.got++;return false}return true});
+   if(r.rock>=0&&Math.abs(r.rock-s.pos)<.65){s.v=Math.max(10,s.v*.5);s.t=Math.max(0,s.t-12);s.fuel=Math.max(0,s.fuel-6);s.flash=.4;r.rock=-1}
+  }}
+ if(s.z>=GOAL){s.win=true;fin()}
+ else if(s.fuel<=0){s.over=true;fin()}
+}
+function fin(){const m=Math.floor(s.z);if(m>best){best=m;try{localStorage.setItem('tankBest2',best)}catch(e){}}}
+const sc=z=>D/(z+D), sy=z=>HOR+(YB-HOR)*sc(z), sx=(l,z)=>CX+(l-2)*LW*sc(z);
+function quad(z1,z2,la,lb,col){
+ g.fillStyle=col;g.beginPath();
+ g.moveTo(sx(la,z1),sy(z1));g.lineTo(sx(lb,z1),sy(z1));g.lineTo(sx(lb,z2),sy(z2));g.lineTo(sx(la,z2),sy(z2));g.closePath();g.fill()}
+function drawTank(x,y,s0){
+ g.save();g.translate(x,y);g.scale(s0,s0);
+ g.fillStyle='rgba(0,0,0,.3)';g.fillRect(-30,-4,60,12);
+ g.fillStyle='#222';g.fillRect(-32,-58,16,66);g.fillRect(16,-58,16,66);
+ g.fillStyle='#555';for(let i=-52;i<=2;i+=9){g.fillRect(-32,i,16,3);g.fillRect(16,i,16,3)}
+ g.fillStyle='#4f7a3c';g.fillRect(-18,-54,36,58);
+ g.fillStyle='#5e8f48';g.fillRect(-14,-42,28,30);
+ g.fillStyle='#3d6030';g.fillRect(-4,-82,8,42);
+ g.fillStyle='#2f4a26';g.beginPath();g.arc(0,-28,10,0,7);g.fill();
+ g.restore()}
+function draw(){
+ const gr=g.createLinearGradient(0,0,0,HOR);gr.addColorStop(0,'#5aa6dd');gr.addColorStop(1,'#cfe8f5');
+ g.fillStyle=gr;g.fillRect(0,0,W,HOR+2);
+ for(let z=300;z>=-4;z-=4){
+  const odd=Math.floor((z+s.z)/8)%2;
+  g.fillStyle=odd?'#5c9c46':'#66a64e';
+  const y1=sy(z+4),y2=sy(z);g.fillRect(0,y1,W,y2-y1+1);
+  quad(z,z+4,-.5,4.5,odd?'#6b6f76':'#757a82');
+  quad(z,z+4,-.62,-.5,odd?'#d33':'#fff');quad(z,z+4,4.5,4.62,odd?'#d33':'#fff');
+ }
+ g.strokeStyle='rgba(255,255,255,.6)';g.lineWidth=2;
+ for(let l=.5;l<4;l++){g.beginPath();g.moveTo(sx(l,300),sy(300));g.lineTo(sx(l,0),sy(0));g.stroke()}
+ // goal
+ const gz=GOAL-s.z;
+ if(gz<300&&gz>-4){for(let i=0;i<10;i++){quad(gz,gz+4,-.5+i*.5,i*.5,i%2?'#000':'#fff')}}
+ // objects far to near
+ const vis=s.rows.filter(r=>!r.done&&r.z-s.z<300&&r.z-s.z>-3).reverse();
+ for(const r of vis){
+  const z=r.z-s.z,k=sc(z),y=sy(z);
+  if(r.rock>=0){const x=sx(r.rock,z),w=50*k,h=38*k;
+   g.fillStyle='#555';g.beginPath();g.moveTo(x-w/2,y);g.lineTo(x-w*.35,y-h);g.lineTo(x+w*.3,y-h*.9);g.lineTo(x+w/2,y);g.closePath();g.fill();
+   g.fillStyle='#888';g.fillRect(x-w*.3,y-h,w*.5,h*.3)}
+  for(const l of r.cans){const x=sx(l,z),w=26*k,h=32*k;
+   g.fillStyle='rgba(0,0,0,.25)';g.fillRect(x-w*.6,y-2*k,w*1.2,4*k);
+   g.fillStyle='#d33';g.fillRect(x-w/2,y-h,w,h);
+   g.fillStyle='#fc3';g.fillRect(x-w*.2,y-h*1.15,w*.4,h*.18);
+   g.fillStyle='#fff';g.font='bold '+Math.max(6,16*k)+'px sans-serif';g.textAlign='center';g.fillText('F',x,y-h*.3)}
+ }
+ drawTank(sx(s.pos,0),YB+10,1);
+ if(s.flash>0){g.fillStyle='rgba(255,60,40,'+s.flash+')';g.fillRect(0,0,W,H)}
+ // HUD
+ g.fillStyle='rgba(0,0,0,.5)';g.fillRect(8,8,W-16,58);
+ g.fillStyle='#fff';g.font='bold 15px sans-serif';g.textAlign='left';
+ g.fillText('燃料',16,29);
+ g.fillStyle='#333';g.fillRect(56,17,W-80,16);
+ g.fillStyle=s.fuel<25?'#e33':'#4c4';g.fillRect(56,17,(W-80)*s.fuel/100,16);
+ g.fillStyle='#fff';
+ g.fillText(Math.floor(s.z)+' m / '+GOAL+' m',16,56);
+ g.font='13px sans-serif';g.textAlign='right';
+ g.fillText('ベスト '+best+' m　'+Math.floor(s.v*3.6)+' km/h　缶 '+s.got,W-16,56);
+ if(s.over||s.win){g.fillStyle='rgba(0,0,0,.6)';g.fillRect(0,0,W,H);
+  g.fillStyle='#fff';g.textAlign='center';g.font='bold 36px sans-serif';
+  g.fillText(s.win?'ゴール到達！':'燃料切れ…',W/2,260);
+  g.font='20px sans-serif';g.fillText('記録 '+Math.floor(s.z)+' m（ベスト '+best+' m）',W/2,300);
+  g.fillText('タップ / Rキーでリトライ',W/2,340)}
+}
+let last=performance.now();
+function loop(n){const dt=Math.min(.05,(n-last)/1000);last=n;step(dt);draw();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script></body></html>
